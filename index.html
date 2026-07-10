@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DALUCI MIS Agent - Business IntelligenceConsole</title>
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+
+<body ng-app="chatApp" ng-controller="ChatController">
+
+    <div class="app-container">
+
+        <!-- Mobile-only top bar (hamburger + logo) -->
+        <div class="mobile-header">
+            <div class="mobile-logo">
+                <div class="logo-icon"><i class="fa-solid fa-brain"></i></div>
+                <div class="logo-text">DALUCI MIS Agent</div>
+            </div>
+
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <button class="btn-hamburger" ng-click="toggleConsole()" title="API Logs" style="position: relative;">
+                    <i class="fa-solid fa-terminal" style="color: var(--accent-cyan)"></i>
+                    <span class="console-header-badge" ng-if="logs.length > 0" style="top: -5px; right: -5px;">{{
+                        logs.length }}</span>
+                </button>
+
+                <button class="btn-hamburger" ng-click="toggleSidebar()" title="Open Menu">
+                    <i class="fa-solid" ng-class="isSidebarOpen ? 'fa-xmark' : 'fa-bars'"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Sidebar overlay for mobile (click to close) -->
+        <div class="sidebar-overlay" ng-class="{'visible': isSidebarOpen}" ng-click="toggleSidebar()"></div>
+
+        <aside class="sidebar" ng-class="{'open': isSidebarOpen}">
+            <div class="sidebar-header">
+                <div class="logo-icon">
+                    <i class="fa-solid fa-brain"></i>
+                </div>
+                <div class="logo-text">DALUCI MIS Agent</div>
+            </div>
+
+            <div class="sidebar-content">
+                <!-- API Authorization Card -->
+                <div class="auth-card">
+                    <div class="auth-header">
+                        <span>API Authorize</span>
+                        <span class="status-badge authorized" ng-show="isAuthorized">
+                            <i class="fa-solid fa-circle-check"></i> Ready
+                        </span>
+                        <span class="status-badge unauthorized" ng-show="!isAuthorized">
+                            <i class="fa-solid fa-circle-xmark"></i> Locked
+                        </span>
+                    </div>
+
+                    <!-- Unauthorized Entry Form -->
+                    <div class="auth-input-group" ng-show="!isAuthorized">
+                        <input type="password" class="auth-input" placeholder="Paste API JWT Token..."
+                            ng-model="auth.token" ng-keydown="$event.keyCode === 13 && saveToken()">
+                        <button class="btn-icon-save" ng-click="saveToken()" title="Save Token">
+                            <i class="fa-solid fa-key"></i>
+                        </button>
+                    </div>
+
+                    <!-- Authorized Info -->
+                    <div ng-show="isAuthorized" style="display: flex; flex-direction: column; gap: 8px;">
+                        <div
+                            style="font-size: 12px; color: var(--text-secondary); word-break: break-all; font-family: var(--font-mono); background: rgba(0,0,0,0.2); padding: 8px; border-radius: 8px; border: 1px dashed rgba(255,255,255,0.05)">
+                            Token Saved
+                        </div>
+                        <button class="btn-secondary" ng-click="resetToken()" style="padding: 6px; font-size: 11px;">
+                            <i class="fa-solid fa-right-from-bracket"></i> Disconnect Token
+                        </button>
+                    </div>
+
+                    <div style="color: var(--accent-red); font-size: 11px; margin-top: 4px;" ng-show="authError">
+                        {{ authError }}
+                    </div>
+                    <div style="color: var(--accent-green); font-size: 11px; margin-top: 4px;" ng-show="isTokenSaved">
+                        Token saved successfully!
+                    </div>
+                </div>
+
+                <!-- Chat Actions -->
+                <button class="btn-new-chat" ng-click="startNewChat()" ng-disabled="!isAuthorized">
+                    <i class="fa-solid fa-plus"></i> New Chat
+                </button>
+
+                <!-- Sessions Section -->
+                <div class="sessions-section">
+                    <div class="section-title"
+                        style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Recent Sessions</span>
+                        <button ng-click="loadSessions()" ng-if="isAuthorized"
+                            style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 11px;"
+                            title="Refresh Session List">
+                            <i class="fa-solid fa-arrows-rotate" ng-class="{'fa-spin': loading}"></i>
+                        </button>
+                    </div>
+
+                    <div class="sessions-list">
+                        <div class="session-item" ng-repeat="session in sessions"
+                            ng-class="{'active': activeSessionId === session.id}" ng-click="selectSession(session.id)">
+                            <div class="session-id" title="{{session.id}}">
+                                <i class="fa-solid fa-message"
+                                    style="margin-right: 6px; color: var(--accent-purple)"></i>
+                                {{ session.id | limitTo:8 }}&hellip;
+                                <!-- Loading spinner shown while this session's meta is being fetched -->
+                                <i class="fa-solid fa-circle-notch fa-spin" ng-if="session._loading"
+                                    style="margin-left:4px; font-size:9px; color:var(--accent-cyan);"></i>
+                            </div>
+                            <!-- Last Message Preview (from local cache / real-time fetch) -->
+                            <div class="session-last-msg" ng-if="session.last_message" title="{{session.last_message}}">
+                                <span class="last-msg-role"
+                                    ng-class="session.last_role === 'user' ? 'user-role' : 'agent-role'">
+                                    {{ session.last_role === 'user' ? 'You' : 'DALUCI-MIS' }}:
+                                </span>{{ session.last_message | limitTo:44 }}{{ session.last_message.length > 44 ? '…'
+                                : '' }}
+                            </div>
+                            <div class="session-meta">
+                                <div class="session-date">
+                                    <i class="fa-solid fa-calendar-days" style="font-size: 10px;"></i>
+                                    {{ session.created_at | date:'MMM d, h:mm a' }}
+                                </div>
+                                <div class="session-count" title="Message count"
+                                    ng-style="session.message_count > 0 ? {'background': 'rgba(139,92,246,0.2)', 'color': 'var(--accent-purple)'} : {}">
+                                    {{ session.message_count || 0 }} msgs
+                                </div>
+                            </div>
+                            <!-- Per-session CSV export -->
+                            <button class="session-csv-btn" ng-if="session.message_count > 0"
+                                ng-click="exportSessionCSV(session.id, $event)"
+                                title="Export this session's conversation as CSV">
+                                <i class="fa-solid fa-file-csv"></i>
+                            </button>
+                            <!-- Local delete option -->
+                            <button class="session-delete-btn" ng-click="deleteSessionLocally(session.id, $event)"
+                                title="Hide session locally">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
+
+                        <!-- Empty Sessions Placeholder -->
+                        <div ng-if="isAuthorized && sessions.length === 0 && !loading"
+                            style="text-align: center; color: var(--text-secondary); font-size: 12px; margin-top: 20px;">
+                            No active sessions found. Click "New Chat" to begin.
+                        </div>
+
+                        <div ng-if="!isAuthorized"
+                            style="text-align: center; color: var(--text-secondary); font-size: 12px; margin-top: 20px;">
+                            Input Auth Token to view sessions.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sidebar Footer (clean - console toggled via floating button) -->
+            <div class="sidebar-footer">
+                <div style="font-size: 10px; color: var(--text-secondary); text-align: center; opacity: 0.5;">DALUCI MIS
+                    Agent &bull; API Network Logs via floating button &rarr;</div>
+            </div>
+        </aside>
+
+        <!-- Central Chat Timeline Panel -->
+        <main class="chat-area">
+
+            <!-- Chat Header -->
+            <header class="chat-header">
+                <div class="chat-header-info">
+                    <h3 class="chat-header-title">
+                        <span ng-if="!activeSessionId && !isNewSession">DALUCI MIS Agent - Business Intelligence
+                            Console</span>
+                        <span ng-if="isNewSession && !activeSessionId">
+                            <i class="fa-solid fa-plus" style="font-size:14px; color: var(--accent-purple)"></i> New
+                            Chat
+                        </span>
+                        <span ng-if="activeSessionId">Chat Session</span>
+                    </h3>
+                    <div class="chat-header-subtitle" ng-if="activeSessionId" title="Session UUID">
+                        ID: {{ activeSessionId }}
+                    </div>
+                    <div class="chat-header-subtitle" ng-if="isNewSession && !activeSessionId"
+                        style="color: var(--accent-purple); font-style: italic;">
+                        Session will be created on first message
+                    </div>
+                </div>
+
+                <!-- Chat Export Actions -->
+                <div class="chat-header-actions">
+                    <!-- API Console Header Button -->
+                    <button class="btn-secondary console-header-btn" ng-click="toggleConsole()"
+                        style="padding: 8px 12px; font-size: 12px; position: relative;"
+                        title="{{isConsoleOpen ? 'Close API Console' : 'Open API Activity Console'}}">
+                        <i class="fa-solid" ng-class="isConsoleOpen ? 'fa-xmark' : 'fa-terminal'"
+                            style="color: var(--accent-cyan)"></i>
+                        <span class="console-btn-text" style="margin-left: 4px;">Logs</span>
+                        <span class="console-header-badge" ng-if="logs.length > 0">{{ logs.length }}</span>
+                    </button>
+                    <!-- FIX: Reload active session history button -->
+                    <button class="btn-secondary" ng-if="activeSessionId && !isNewSession" ng-click="reloadSession()"
+                        style="padding: 8px 12px; font-size: 12px;" title="Reload session history from server">
+                        <i class="fa-solid fa-arrows-rotate" ng-class="{'fa-spin': loading}"></i>
+                    </button>
+                    <button class="btn-secondary" ng-if="messages.length > 0" ng-click="exportChat('csv')"
+                        style="padding: 8px 12px; font-size: 12px;" title="Export Active Chat as CSV">
+                        <i class="fa-solid fa-file-csv" style="color: var(--accent-cyan)"></i> CSV
+                    </button>
+                    <button class="btn-secondary" ng-if="messages.length > 0" ng-click="exportChat('excel')"
+                        style="padding: 8px 12px; font-size: 12px;" title="Export Active Chat as Excel">
+                        <i class="fa-solid fa-file-excel" style="color: var(--accent-green)"></i> Excel
+                    </button>
+                </div>
+            </header>
+
+            <!-- Chat Content area -->
+            <div class="chat-messages" id="chat-messages-container">
+
+                <!-- Welcome Dashboard (Visible when no active chat/messages exist) -->
+                <div class="dashboard-container" ng-if="messages.length === 0">
+                    <div class="dashboard-icon">
+                        <i class="fa-solid fa-bolt"></i>
+                    </div>
+                    <h2 class="dashboard-title">Welcome to DALUCI MIS Agent</h2>
+                    <p class="dashboard-desc">
+                        A beautiful client dashboard designed to communicate with DALUCI-MIS. Authorized via API tokens,
+                        storing complete network request payloads, and allowing spreadsheet downloads.
+                    </p>
+
+                    <div class="features-grid">
+                        <div class="feature-card" ng-if="!isAuthorized">
+                            <h4 class="feature-title" style="color: var(--accent-purple)">
+                                <i class="fa-solid fa-key"></i> Step 1: Authorize
+                            </h4>
+                            <p class="feature-desc">Paste your JWT authorization token in the left sidebar configuration
+                                to authenticate.</p>
+                        </div>
+                        <div class="feature-card" ng-if="isAuthorized">
+                            <h4 class="feature-title" style="color: var(--accent-green)">
+                                <i class="fa-solid fa-circle-check"></i> Step 1: Authorized!
+                            </h4>
+                            <p class="feature-desc">You are successfully connected. Choose an existing session or start
+                                a new chat.</p>
+                        </div>
+                        <div class="feature-card">
+                            <h4 class="feature-title" style="color: var(--accent-cyan)">
+                                <i class="fa-solid fa-terminal"></i> Step 2: Logging Enabled
+                            </h4>
+                            <p class="feature-desc">All POST and GET network calls, including payload headers, bodies,
+                                latency, and status are tracked in real-time.</p>
+                        </div>
+                        <div class="feature-card">
+                            <h4 class="feature-title" style="color: #fb7185">
+                                <i class="fa-solid fa-file-export"></i> Step 3: Export Anything
+                            </h4>
+                            <p class="feature-desc">Export recorded chat dialogues and raw API activity streams as CSV
+                                or Excel sheets at any point.</p>
+                        </div>
+                        <div class="feature-card">
+                            <h4 class="feature-title" style="color: #f59e0b">
+                                <i class="fa-solid fa-microchip"></i> MIS Tools & Docs
+                            </h4>
+                            <p class="feature-desc">Renders markdown syntax, sources citation lists, and tool execution
+                                badges transparently.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat Message List -->
+                <div class="message-wrapper" ng-repeat="message in messages track by message.id"
+                    ng-class="message.role === 'user' ? 'user' : 'agent'">
+
+                    <div class="message-bubble"
+                        ng-style="message.isError && {'border-color': 'rgba(239, 68, 68, 0.4)', 'background': 'rgba(239, 68, 68, 0.05)'}">
+
+                        <!-- Main Text Body -->
+                        <div ng-bind-html="message.content | markdown"></div>
+
+
+                        <!-- Tool Calls Badge list -->
+                        <div class="message-tools" ng-if="message.tool_calls && message.tool_calls.length > 0">
+                            <span class="tool-badge" ng-repeat="tool in message.tool_calls"
+                                title="Args: {{tool.args | json}}">
+                                <i class="fa-solid fa-gear"></i> Tool: {{ tool.name }}
+                            </span>
+                        </div>
+
+                        <!-- Sources citation list -->
+                        <div class="message-sources" ng-if="message.sources && message.sources.length > 0">
+                            <div class="sources-title">
+                                <i class="fa-solid fa-quote-left"></i> Source Documents
+                            </div>
+                            <div class="source-item" ng-repeat="src in message.sources">
+                                <strong>{{ src.title || 'Doc ' + ($index + 1) }}</strong>: {{ src.snippet }}
+                                <a ng-if="src.url" href="{{src.url}}" target="_blank"
+                                    style="color: var(--accent-cyan); margin-left: 5px;" title="Visit Source Link">
+                                    <i class="fa-solid fa-arrow-up-right-from-square" style="font-size: 10px;"></i>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Message Meta information -->
+                    <div class="message-meta">
+                        <span ng-if="message.role === 'user'">You</span>
+                        <span ng-if="message.role === 'agent'">DALUCI-MIS</span>
+                        &bull; {{ message.created_at | date:'h:mm:ss a' }}
+
+                        <!-- Inline Copy Button -->
+                        <button class="btn-copy-meta" ng-click="copyMessage(message.content, $event)"
+                            title="Copy message">
+                            <i class="fa-regular fa-copy"></i>
+                        </button>
+                    </div>
+
+                    <!-- Bubble Typing / Load State -->
+                    <div class="message-wrapper agent" ng-if="loading">
+                        <div class="message-bubble">
+                            <div class="loading-bubble">
+                                <div class="dot"></div>
+                                <div class="dot"></div>
+                                <div class="dot"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Chat Bottom Input Bar -->
+                <div class="chat-input-container">
+                    <div class="chat-input-wrapper">
+                        <!-- Textarea supporting Shift+Enter for newline, Enter to Send -->
+                        <textarea class="chat-textarea" id="chat-textarea" ng-model="newMessage"
+                            placeholder="{{isAuthorized ? 'Type your message to DALUCI-MIS here... (Enter to send)' : 'Please authorize token in the sidebar to start chat...'}}"
+                            ng-keydown="($event.keyCode === 13 && !$event.shiftKey) ? ($event.preventDefault() || sendMessage()) : null"
+                            ng-keyup="autoGrowTextarea()" ng-paste="autoGrowTextarea()"
+                            ng-disabled="loading || !isAuthorized"></textarea>
+
+                        <button class="btn-send" ng-click="sendMessage()"
+                            ng-disabled="!newMessage.trim() || loading || !isAuthorized" title="Send Message">
+                            <i class="fa-solid fa-paper-plane" ng-if="!loading"></i>
+                            <i class="fa-solid fa-circle-notch fa-spin" ng-if="loading"></i>
+                        </button>
+                    </div>
+                    <div class="chat-input-hint">
+                        DALUCI MIS Agent Portal - Business Intelligence Console </div>
+                </div>
+
+        </main>
+
+
+
+        <!-- Right Side: API Network Console Drawer -->
+        <aside class="console-container" ng-class="{'closed': !isConsoleOpen}">
+
+            <div class="console-header">
+                <div class="console-title">
+                    <i class="fa-solid fa-terminal"></i> API Network Console
+                </div>
+                <button class="close-console-btn" ng-click="toggleConsole()" title="Close Drawer">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <!-- Exports / Actions in logs drawer -->
+            <div class="console-actions" ng-if="logs.length > 0">
+                <button class="btn-secondary" ng-click="exportNetworkLogs('json')"
+                    style="padding: 6px 10px; font-size: 11px; flex: 1;" title="Export all Logs as JSON">
+                    <i class="fa-solid fa-file-code" style="color: var(--accent-cyan)"></i> Export JSON
+                </button>
+                <button class="btn-secondary" ng-click="clearLogs()"
+                    style="padding: 6px 10px; font-size: 11px; color: var(--accent-red); flex: 1;" title="Clear Logs">
+                    <i class="fa-solid fa-trash-can"></i> Clear
+                </button>
+            </div>
+
+
+
+            <!-- Console Log Listing -->
+            <div class="console-list">
+                <div ng-if="logs.length === 0"
+                    style="text-align: center; color: var(--text-secondary); margin-top: 100px; font-size: 13px;">
+                    <i class="fa-solid fa-network-wired"
+                        style="font-size: 32px; color: rgba(255,255,255,0.05); margin-bottom: 12px; display: block;"></i>
+                    No requests captured yet.<br>Load sessions or send messages to begin recording.
+                </div>
+
+                <div class="log-item" ng-repeat="log in logs | orderBy:'-timestamp' track by log.id">
+                    <!-- Log Row Summary -->
+                    <div class="log-summary" ng-click="log.expanded = !log.expanded">
+                        <div class="log-meta-row">
+                            <span class="log-method-endpoint">
+                                <span class="log-method" ng-class="log.method.toLowerCase()">{{ log.method }}</span>
+                                <span class="log-endpoint" title="{{log.url}}">{{
+                                    log.url.replace('http://69.62.84.108:8000/api/v1', '').replace('/api/v1', '') || '/'
+                                    }}</span>
+                            </span>
+                            <span class="log-status"
+                                ng-class="log.status >= 200 && log.status < 300 ? 'success' : 'error'"
+                                style="flex-shrink:0; margin-left:4px;">
+                                {{ log.status }}
+                            </span>
+                        </div>
+                        <div class="log-time-latency">
+                            <span>{{ log.timestamp | date:'h:mm:ss.SSS a' }}</span>
+                            <span><i class="fa-regular fa-clock"></i> {{ log.latency }}ms</span>
+                        </div>
+                    </div>
+
+                    <!-- Log Expandable Detail Section -->
+                    <div class="log-details" ng-show="log.expanded">
+                        <div class="log-detail-section">
+                            <div class="log-detail-title">Request Headers</div>
+                            <pre class="log-json-block">{{ formatJSON(log.reqHeaders) }}</pre>
+                        </div>
+                        <div class="log-detail-section" ng-if="log.reqBody">
+                            <div class="log-detail-title">Request Payload</div>
+                            <pre class="log-json-block">{{ formatJSON(log.reqBody) }}</pre>
+                        </div>
+                        <div class="log-detail-section">
+                            <div class="log-detail-title">Response Headers</div>
+                            <pre class="log-json-block">{{ formatJSON(log.resHeaders) }}</pre>
+                        </div>
+                        <div class="log-detail-section">
+                            <div class="log-detail-title">Response Body</div>
+                            <pre class="log-json-block">{{ formatJSON(log.resBody) }}</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+    </div>
+
+    <!-- AngularJS & Support Libraries -->
+    <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <!-- App Main Script -->
+    <script src="app.js"></script>
+</body>
+
+</html>
