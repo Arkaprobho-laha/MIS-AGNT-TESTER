@@ -289,6 +289,32 @@
                             </span>
                         </div>
 
+                        <!-- Visualizations / Charts -->
+                        <div class="message-visualizations" ng-if="message.visualizations && message.visualizations.length > 0" style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                            <div class="visualization-item" ng-repeat="vis in message.visualizations track by $index" style="position: relative; height: 350px; width: 100%; margin-bottom: 10px;">
+                                <!-- Lazy loader overlay -->
+                                <div class="chart-loader" ng-if="!vis._rendered" style="position: absolute; top:0; left:0; right:0; bottom:0; display:flex; justify-content:center; align-items:center; background: rgba(255,255,255,0.02); z-index: 10; border-radius: 8px;">
+                                    <i class="fa-solid fa-circle-notch fa-spin" style="color: var(--accent-cyan); font-size: 24px;"></i>
+                                </div>
+                                <canvas chart-renderer="vis"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Generated Images -->
+                        <div class="message-images" ng-if="message.images && message.images.length > 0">
+                            <div class="image-card" ng-repeat="img in message.images track by $index">
+                                <img src="{{ img.url }}" alt="{{ img.prompt || 'Generated image' }}" loading="lazy">
+                                <div class="image-card-footer">
+                                    <span class="image-prompt" title="{{ img.prompt }}">{{ img.prompt }}</span>
+                                    <button class="image-download-btn"
+                                        ng-click="downloadImage(img.url, 'generated-image-' + $index + '.jpg', $event)"
+                                        title="Download image">
+                                        <i class="fa-solid fa-download"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Sources citation list -->
                         <div class="message-sources" ng-if="message.sources && message.sources.length > 0">
                             <div class="sources-title">
@@ -317,17 +343,17 @@
                         </button>
                     </div>
 
-                    <!-- Bubble Typing / Load State -->
-                    <div class="message-wrapper agent" ng-if="loading">
-                        <div class="message-bubble">
-                            <div class="loading-bubble">
-                                <div class="dot"></div>
-                                <div class="dot"></div>
-                                <div class="dot"></div>
-                            </div>
+                </div>
+
+                <!-- Bubble Typing / Load State (Moved outside ng-repeat) -->
+                <div class="message-wrapper agent" ng-if="loading">
+                    <div class="message-bubble">
+                        <div class="loading-bubble">
+                            <div class="dot"></div>
+                            <div class="dot"></div>
+                            <div class="dot"></div>
                         </div>
                     </div>
-
                 </div>
 
                 <!-- Chat Bottom Input Bar -->
@@ -413,6 +439,12 @@
 
                     <!-- Log Expandable Detail Section -->
                     <div class="log-details" ng-show="log.expanded">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 8px;">
+                            <span style="font-size: 11px; color: var(--text-secondary);"><i class="fa-solid fa-circle-info"></i> Detailed Request & Response</span>
+                            <button class="btn-secondary" ng-click="exportSingleLog(log, $event)" style="padding: 4px 8px; font-size: 10px;" title="Export this log as JSON">
+                                <i class="fa-solid fa-file-code" style="color: var(--accent-cyan)"></i> Export Log
+                            </button>
+                        </div>
                         <div class="log-detail-section">
                             <div class="log-detail-title">Request Headers</div>
                             <pre class="log-json-block">{{ formatJSON(log.reqHeaders) }}</pre>
@@ -439,6 +471,7 @@
     <!-- AngularJS & Support Libraries -->
     <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="chart.min.js"></script>
 
     <!-- App Main Script -->
     <script src="app.js"></script>

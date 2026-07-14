@@ -149,9 +149,7 @@
             }));
         };
 
-        // Export data to CSV
-        // FIX: Added UTF-8 BOM (\uFEFF) so Excel on Windows renders Unicode/Hindi text correctly.
-        // FIX: Revoke the blob URL after click to prevent memory leak.
+
         // Export data to JSON
         self.exportJSON = function (data, filename) {
             if (!data || !data.length) {
@@ -172,11 +170,11 @@
                 document.body.appendChild(a);
                 a.click();
 
-                // FIX: 2000ms timeout ensures large files complete writing before cleanup
+                // FIX: 60000ms timeout ensures large files complete writing before cleanup
                 setTimeout(function () {
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
-                }, 2000);
+                }, 60000);
             } catch (e) {
                 console.error('JSON export failed:', e);
                 alert('JSON export failed: ' + e.message);
@@ -196,15 +194,21 @@
                 const rows = data.map(row => keys.map(k => {
                     let cell = (row[k] === null || row[k] === undefined) ? '' : row[k];
                     cell = typeof cell === 'object' ? JSON.stringify(cell) : String(cell);
+                    // FIX: Strip control/null characters — these can make Excel/OS
+                    // treat the file as binary/corrupt instead of plain text CSV.
+                    cell = cell.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
                     cell = cell.replace(/"/g, '""');  // escape double quotes
-                    if (cell.search(/[,\n"]/g) >= 0) {
+                    if (cell.search(/[,\r\n"]/g) >= 0) {
                         cell = '"' + cell + '"';  // wrap in quotes
                     }
                     return cell;
                 }).join(separator));
 
                 // \uFEFF = UTF-8 BOM — required for Excel to correctly decode Unicode characters
-                const csvContent = '\uFEFF' + [keys.join(separator), ...rows].join('\n');
+                // FIX: Use CRLF (\r\n) row separators per RFC 4180 — plain \n row endings
+                // are what cause some Windows/Excel CSV parsers to render everything
+                // as a single garbled column ("looks corrupted").
+                const csvContent = '\uFEFF' + [keys.join(separator), ...rows].join('\r\n');
 
                 const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
                 const url = URL.createObjectURL(blob);
@@ -216,11 +220,11 @@
                 document.body.appendChild(a);
                 a.click();
 
-                // FIX: Increased from 300ms to 2000ms to prevent premature truncation
+                // FIX: Increased from 2000ms to 60000ms to prevent premature truncation
                 setTimeout(function () {
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
-                }, 2000);
+                }, 60000);
             } catch (e) {
                 console.error('CSV export failed:', e);
                 alert('CSV export failed: ' + e.message);
@@ -228,8 +232,6 @@
         };
 
         // Export data to Excel using SheetJS (XLSX)
-        // FIX: Sanitise data before writing — Excel has a 32,767 char limit per cell.
-        //      Any cell exceeding this limit will crash SheetJS. We truncate long values.
         self.exportExcel = function (data, sheetName, filename) {
             if (!data || !data.length) {
                 alert('No data available to export.');
@@ -249,8 +251,20 @@
                 function sanitizeCell(val) {
                     if (val === null || val === undefined) return '';
                     let str = (typeof val === 'object') ? JSON.stringify(val) : String(val);
+                    // Remove non-printable control characters that corrupt Excel XML
+                    str = str.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F]/g, '');
                     if (str.length > EXCEL_MAX_CELL) {
-                        str = str.substring(0, EXCEL_MAX_CELL - 3) + '...';
+                        let cutAt = EXCEL_MAX_CELL - 3;
+                        // FIX: Don't cut in the middle of a UTF-16 surrogate pair (emoji, etc).
+                        // A high surrogate (0xD800-0xDBFF) at the very end of the slice means
+                        // its matching low surrogate got chopped off, leaving an invalid/lone
+                        // surrogate. That produces invalid UTF-8 in the .xlsx XML and Excel
+                        // reports the file as corrupted / needing repair. Back up one char.
+                        const code = str.charCodeAt(cutAt - 1);
+                        if (code >= 0xD800 && code <= 0xDBFF) {
+                            cutAt -= 1;
+                        }
+                        str = str.substring(0, cutAt) + '...';
                     }
                     return str;
                 }
@@ -666,7 +680,9 @@
                             // FIX: Normalize API timestamps to UTC for correct IST display
                             created_at: normalizeTimestamp(msg.created_at),
                             sources: msg.sources || [],
-                            tool_calls: msg.tool_calls || []
+                            tool_calls: msg.tool_calls || [],
+                            visualizations: msg.visualizations || [],
+                            images: msg.images || []
                         }));
                         // CACHE: Persist real message count + last message for this session
                         syncSessionMeta(sessionId, $scope.messages);
@@ -711,7 +727,9 @@
                             content: msg.content,
                             created_at: normalizeTimestamp(msg.created_at),
                             sources: msg.sources || [],
-                            tool_calls: msg.tool_calls || []
+                            tool_calls: msg.tool_calls || [],
+                            visualizations: msg.visualizations || [],
+                            images: msg.images || []
                         }));
                         if (!msgs || !msgs.length) {
                             alert("No chat messages in this session to export.");
@@ -723,7 +741,9 @@
                             'Role': m.role,
                             'Message Content': m.content,
                             'Sources': JSON.stringify(m.sources || []),
-                            'Tool Calls': JSON.stringify(m.tool_calls || [])
+                            'Tool Calls': JSON.stringify(m.tool_calls || []),
+                            'Visualizations': JSON.stringify(m.visualizations || []),
+                            'Images': JSON.stringify(m.images || [])
                         }));
                         const sessionPrefix = sessionId.substring(0, 8);
                         const filename = `chat_history_${sessionPrefix}_${Date.now()}.csv`;
@@ -751,7 +771,9 @@
                             content: msg.content,
                             created_at: normalizeTimestamp(msg.created_at),
                             sources: msg.sources || [],
-                            tool_calls: msg.tool_calls || []
+                            tool_calls: msg.tool_calls || [],
+                            visualizations: msg.visualizations || [],
+                            images: msg.images || []
                         }));
                         // CACHE: Persist real message count + last message after manual reload
                         syncSessionMeta($scope.activeSessionId, $scope.messages);
@@ -812,7 +834,9 @@
                             content: response.data.reply || '',
                             created_at: new Date().toISOString(),
                             sources: response.data.sources || [],
-                            tool_calls: response.data.tool_calls || []
+                            tool_calls: response.data.tool_calls || [],
+                            visualizations: response.data.visualizations || [],
+                            images: response.data.images || []
                         };
                         $scope.messages.push(agentMsg);
 
@@ -885,7 +909,9 @@
                 'Role': m.role,
                 'Message Content': m.content,
                 'Sources': JSON.stringify(m.sources || []),
-                'Tool Calls': JSON.stringify(m.tool_calls || [])
+                'Tool Calls': JSON.stringify(m.tool_calls || []),
+                'Visualizations': JSON.stringify(m.visualizations || []),
+                'Images': JSON.stringify(m.images || [])
             }));
 
             const sessionPrefix = $scope.activeSessionId ? $scope.activeSessionId.substring(0, 8) : 'new';
@@ -914,8 +940,14 @@
 
         // Clear local logs
         $scope.clearLogs = function () {
-            // LogService.clearLogs() now splices in-place, so $scope.logs reference stays valid
             LogService.clearLogs();
+            $scope.logs = [];
+        };
+
+        $scope.exportSingleLog = function (log, event) {
+            if (event) event.stopPropagation();
+            const filename = `api_log_${log.method}_${Date.now()}.json`;
+            LogService.exportJSON([log], filename);
         };
 
         // Toggle Console Drawer
@@ -977,6 +1009,43 @@
                 }
                 document.body.removeChild(textArea);
             }
+        };
+
+        // Download a generated image (from S3 or any URL) as an actual file.
+        // NOTE: a plain <a href="..." download> is silently ignored by browsers when
+        // the URL is cross-origin (e.g. S3) — it just opens the image in a new tab
+        // instead of downloading it. Fetching as a blob makes the download attribute
+        // work reliably, as long as the bucket's CORS policy allows GET from this origin.
+        $scope.downloadImage = function (url, filename, event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            if (!url) return;
+
+            fetch(url, { mode: 'cors' })
+                .then(function (res) {
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    return res.blob();
+                })
+                .then(function (blob) {
+                    const blobUrl = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = blobUrl;
+                    a.download = filename || 'generated-image.jpg';
+                    a.style.display = 'none';
+                    document.body.appendChild(a);
+                    a.click();
+                    setTimeout(function () {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(blobUrl);
+                    }, 10000);
+                })
+                .catch(function (err) {
+                    console.warn('Blob download failed (likely CORS on the image bucket), falling back to opening the image in a new tab:', err);
+                    // Fallback: open in a new tab so the user can save it manually
+                    window.open(url, '_blank', 'noopener,noreferrer');
+                });
         };
 
         // Format JSON payload helper
@@ -1093,6 +1162,160 @@
             html = html.replace(/\n(?!<\/?(ul|ol|li|pre|h[1-6]|hr))/g, '<br/>');
 
             return $sce.trustAsHtml(html);
+        };
+    }]);
+
+    // Chart.js Directive for rendering visualizations
+    app.directive('chartRenderer', ['$timeout', function ($timeout) {
+        return {
+            restrict: 'A',
+            scope: {
+                chartData: '=chartRenderer'
+            },
+            link: function (scope, element) {
+                let chartInstance = null;
+                let isVisible = false;
+                const canvas = element[0];
+
+                function renderChart() {
+                    if (chartInstance) {
+                        chartInstance.destroy();
+                    }
+                    if (scope.chartData && isVisible) {
+                        try {
+                            let config;
+                            if (typeof scope.chartData === 'string') {
+                                config = JSON.parse(scope.chartData);
+                            } else {
+                                // Deep clone to prevent mutating scope data and causing infinite digest loops
+                                config = JSON.parse(JSON.stringify(scope.chartData));
+                            }
+
+                            // Check if the payload contains pre-configured chartjs_config
+                            let finalConfig = null;
+                            if (config.type === 'chart_visualization' && config.payload && config.payload.chartjs_config) {
+                                finalConfig = config.payload.chartjs_config;
+                            } else if (config.payload && config.payload.chartjs_config) {
+                                finalConfig = config.payload.chartjs_config;
+                            } else if (config.chartjs_config) {
+                                finalConfig = config.chartjs_config;
+                            } else if (config.payload && config.payload.data && config.payload.xKey && config.payload.yKey) {
+                                // Advanced N-Way Comparison Structure (New in v2)
+                                const p = config.payload;
+                                const labels = p.data.map(item => item[p.xKey]);
+
+                                const datasets = [{
+                                    label: p.title || p.yKey,
+                                    data: p.data.map(item => item[p.yKey]),
+                                    backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                                    borderColor: 'rgba(54, 162, 235, 1)',
+                                    borderWidth: 1
+                                }];
+
+                                if (p.additional_datasets && Array.isArray(p.additional_datasets)) {
+                                    const colors = ['rgba(255, 99, 132, 0.6)', 'rgba(75, 192, 192, 0.6)', 'rgba(153, 102, 255, 0.6)', 'rgba(255, 159, 64, 0.6)'];
+                                    const borders = ['rgba(255, 99, 132, 1)', 'rgba(75, 192, 192, 1)', 'rgba(153, 102, 255, 1)', 'rgba(255, 159, 64, 1)'];
+
+                                    p.additional_datasets.forEach((ad, index) => {
+                                        const mergedData = labels.map(labelValue => {
+                                            const match = ad.data.find(item => item[p.xKey] === labelValue);
+                                            return match ? match[ad.yKey] : null;
+                                        });
+
+                                        datasets.push({
+                                            label: ad.label || ad.yKey,
+                                            data: mergedData,
+                                            backgroundColor: colors[index % colors.length],
+                                            borderColor: borders[index % borders.length],
+                                            borderWidth: 1
+                                        });
+                                    });
+                                }
+
+                                finalConfig = {
+                                    type: config.type === 'chart_visualization' ? 'bar' : (config.type || 'bar'),
+                                    data: { labels: labels, datasets: datasets },
+                                    options: {
+                                        responsive: true,
+                                        maintainAspectRatio: false,
+                                        plugins: { title: { display: !!p.title, text: p.title || '' } }
+                                    }
+                                };
+                            } else {
+                                // Legacy mapping
+                                finalConfig = config;
+                                if (finalConfig.chart_type) finalConfig.type = finalConfig.chart_type;
+                                if (finalConfig.chart_data) finalConfig.data = finalConfig.chart_data;
+                                if (finalConfig.chart_options) finalConfig.options = finalConfig.chart_options;
+                            }
+
+                            config = finalConfig;
+
+                            // Normalize config structure if it only contains data
+                            if (!config.type && config.datasets) {
+                                config = { type: 'bar', data: config };
+                            } else if (!config.type && config.data && config.data.datasets) {
+                                config.type = 'bar';
+                            }
+
+                            if (config.type && config.data) {
+                                // Enforce responsive options and immediate render (no animation)
+                                config.options = config.options || {};
+                                config.options.responsive = true;
+                                config.options.maintainAspectRatio = false;
+                                config.options.animation = false; // Render immediately without animations
+                                const ctx = canvas.getContext('2d');
+                                chartInstance = new Chart(ctx, config);
+
+                                // Inform UI that chart is rendered
+                                $timeout(() => {
+                                    if (typeof scope.chartData === 'object') {
+                                        scope.chartData._rendered = true;
+                                    }
+                                });
+                            } else {
+                                console.warn('Invalid Chart configuration:', config);
+                                const ctx = canvas.getContext('2d');
+                                ctx.font = "12px sans-serif";
+                                ctx.fillStyle = "#ff6b6b";
+                                ctx.fillText("Invalid chart data", 10, 30);
+                            }
+                        } catch (e) {
+                            console.error('Error parsing/rendering chart:', e);
+                        }
+                    }
+                }
+
+                // Intersection Observer for Lazy Loading
+                const observer = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            isVisible = true;
+                            if (!chartInstance && scope.chartData) {
+                                renderChart();
+                            }
+                        }
+                    });
+                }, { rootMargin: '200px' }); // Start loading slightly before it scrolls into view
+
+                observer.observe(element[0]);
+
+                // Shallow watch to avoid infinite loops, data from API won't mutate internally
+                scope.$watch('chartData', function (newVal) {
+                    if (newVal) {
+                        if (isVisible) {
+                            $timeout(renderChart, 0);
+                        }
+                    }
+                });
+
+                scope.$on('$destroy', function () {
+                    observer.disconnect();
+                    if (chartInstance) {
+                        chartInstance.destroy();
+                    }
+                });
+            }
         };
     }]);
 
