@@ -99,21 +99,13 @@
                         <button ng-click="loadSessions()" ng-if="isAuthorized"
                             style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 11px;"
                             title="Refresh Session List">
-                            <i class="fa-solid fa-arrows-rotate" ng-class="{'fa-spin': loading}"></i>
+                            <i class="fa-solid fa-arrows-rotate" ng-class="{'fa-spin': isRefreshingSessions}"></i>
                         </button>
                     </div>
 
                     <div class="sessions-list">
                         <div class="session-item" ng-repeat="session in sessions"
                             ng-class="{'active': activeSessionId === session.id}" ng-click="selectSession(session.id)">
-                            <div class="session-id" title="{{session.id}}">
-                                <i class="fa-solid fa-message"
-                                    style="margin-right: 6px; color: var(--accent-purple)"></i>
-                                {{ session.id | limitTo:8 }}&hellip;
-                                <!-- Loading spinner shown while this session's meta is being fetched -->
-                                <i class="fa-solid fa-circle-notch fa-spin" ng-if="session._loading"
-                                    style="margin-left:4px; font-size:9px; color:var(--accent-cyan);"></i>
-                            </div>
                             <!-- Last Message Preview (from local cache / real-time fetch) -->
                             <div class="session-last-msg" ng-if="session.last_message" title="{{session.last_message}}">
                                 <span class="last-msg-role"
@@ -123,21 +115,26 @@
                                 : '' }}
                             </div>
                             <div class="session-meta">
-                                <div class="session-date">
-                                    <i class="fa-solid fa-calendar-days" style="font-size: 10px;"></i>
+                                <div class="session-date" title="Session ID: {{session.id}}">
+                                    <i class="fa-solid fa-calendar-days"
+                                        style="font-size: 10px; color: var(--accent-purple)"></i>
                                     {{ session.created_at | date:'MMM d, h:mm a' }}
+                                    <!-- Per-session CSV export -->
+                                    <button class="session-csv-btn" ng-if="session.message_count > 0"
+                                        ng-click="exportSessionCSV(session.id, $event)"
+                                        title="Export this session's conversation as CSV">
+                                        <i class="fa-solid fa-file-csv"></i>
+                                    </button>
+                                    <!-- Loading spinner shown while this session's meta is being fetched -->
+                                    <i class="fa-solid fa-circle-notch fa-spin" ng-if="session._loading"
+                                        style="margin-left:4px; font-size:9px; color:var(--accent-cyan);"></i>
                                 </div>
                                 <div class="session-count" title="Message count"
                                     ng-style="session.message_count > 0 ? {'background': 'rgba(139,92,246,0.2)', 'color': 'var(--accent-purple)'} : {}">
                                     {{ session.message_count || 0 }} msgs
                                 </div>
                             </div>
-                            <!-- Per-session CSV export -->
-                            <button class="session-csv-btn" ng-if="session.message_count > 0"
-                                ng-click="exportSessionCSV(session.id, $event)"
-                                title="Export this session's conversation as CSV">
-                                <i class="fa-solid fa-file-csv"></i>
-                            </button>
+
                             <!-- Local delete option -->
                             <button class="session-delete-btn" ng-click="deleteSessionLocally(session.id, $event)"
                                 title="Hide session locally">
@@ -204,7 +201,7 @@
                     <!-- FIX: Reload active session history button -->
                     <button class="btn-secondary" ng-if="activeSessionId && !isNewSession" ng-click="reloadSession()"
                         style="padding: 8px 12px; font-size: 12px;" title="Reload session history from server">
-                        <i class="fa-solid fa-arrows-rotate" ng-class="{'fa-spin': loading}"></i>
+                        <i class="fa-solid fa-arrows-rotate" ng-class="{'fa-spin': isReloadingSession}"></i>
                     </button>
                     <button class="btn-secondary" ng-if="messages.length > 0" ng-click="exportChat('csv')"
                         style="padding: 8px 12px; font-size: 12px;" title="Export Active Chat as CSV">
@@ -214,11 +211,23 @@
                         style="padding: 8px 12px; font-size: 12px;" title="Export Active Chat as Excel">
                         <i class="fa-solid fa-file-excel" style="color: var(--accent-green)"></i> Excel
                     </button>
+                    <button class="btn-secondary" ng-if="messages.length > 0" ng-click="exportChatAsImage()"
+                        style="padding: 8px 12px; font-size: 12px;" title="Export Chat Screenshot">
+                        <i class="fa-solid fa-camera" style="color: var(--accent-purple)"></i> Image
+                    </button>
                 </div>
             </header>
 
             <!-- Chat Content area -->
             <div class="chat-messages" id="chat-messages-container">
+
+                <!-- Load More Button -->
+                <div class="load-more-container" ng-if="hasMoreHistory">
+                    <button class="load-more-btn" ng-click="loadMoreHistory()" ng-disabled="isLoadingHistory">
+                        <i class="fa-solid fa-clock-rotate-left"></i>
+                        {{ isLoadingHistory ? 'Loading...' : 'Load Older Messages' }}
+                    </button>
+                </div>
 
                 <!-- Welcome Dashboard (Visible when no active chat/messages exist) -->
                 <div class="dashboard-container" ng-if="messages.length === 0">
@@ -271,6 +280,8 @@
                 </div>
 
                 <!-- Chat Message List -->
+                <!-- Because of column-reverse, messages are rendered from bottom to top in DOM order -->
+                <!-- index 0 (newest) is at the bottom -->
                 <div class="message-wrapper" ng-repeat="message in messages track by message.id"
                     ng-class="message.role === 'user' ? 'user' : 'agent'">
 
@@ -281,20 +292,19 @@
                         <div ng-bind-html="message.content | markdown"></div>
 
 
-                        <!-- Tool Calls Badge list -->
-                        <div class="message-tools" ng-if="message.tool_calls && message.tool_calls.length > 0">
-                            <span class="tool-badge" ng-repeat="tool in message.tool_calls"
-                                title="Args: {{tool.args | json}}">
-                                <i class="fa-solid fa-gear"></i> Tool: {{ tool.name }}
-                            </span>
-                        </div>
+
 
                         <!-- Visualizations / Charts -->
-                        <div class="message-visualizations" ng-if="message.visualizations && message.visualizations.length > 0" style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                            <div class="visualization-item" ng-repeat="vis in message.visualizations track by $index" style="position: relative; height: 350px; width: 100%; margin-bottom: 10px;">
+                        <div class="message-visualizations"
+                            ng-if="message.visualizations && message.visualizations.length > 0"
+                            style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                            <div class="visualization-item" ng-repeat="vis in message.visualizations track by $index"
+                                style="position: relative; height: 350px; width: 100%; margin-bottom: 10px;">
                                 <!-- Lazy loader overlay -->
-                                <div class="chart-loader" ng-if="!vis._rendered" style="position: absolute; top:0; left:0; right:0; bottom:0; display:flex; justify-content:center; align-items:center; background: rgba(255,255,255,0.02); z-index: 10; border-radius: 8px;">
-                                    <i class="fa-solid fa-circle-notch fa-spin" style="color: var(--accent-cyan); font-size: 24px;"></i>
+                                <div class="chart-loader" ng-if="!vis._rendered"
+                                    style="position: absolute; top:0; left:0; right:0; bottom:0; display:flex; justify-content:center; align-items:center; background: rgba(255,255,255,0.02); z-index: 10; border-radius: 8px;">
+                                    <i class="fa-solid fa-circle-notch fa-spin"
+                                        style="color: var(--accent-cyan); font-size: 24px;"></i>
                                 </div>
                                 <canvas chart-renderer="vis"></canvas>
                             </div>
@@ -345,7 +355,7 @@
 
                 </div>
 
-                <!-- Bubble Typing / Load State (Moved outside ng-repeat) -->
+                <!-- Bubble Typing / Load State -->
                 <div class="message-wrapper agent" ng-if="loading">
                     <div class="message-bubble">
                         <div class="loading-bubble">
@@ -356,25 +366,27 @@
                     </div>
                 </div>
 
-                <!-- Chat Bottom Input Bar -->
-                <div class="chat-input-container">
-                    <div class="chat-input-wrapper">
-                        <!-- Textarea supporting Shift+Enter for newline, Enter to Send -->
-                        <textarea class="chat-textarea" id="chat-textarea" ng-model="newMessage"
-                            placeholder="{{isAuthorized ? 'Type your message to DALUCI-MIS here... (Enter to send)' : 'Please authorize token in the sidebar to start chat...'}}"
-                            ng-keydown="($event.keyCode === 13 && !$event.shiftKey) ? ($event.preventDefault() || sendMessage()) : null"
-                            ng-keyup="autoGrowTextarea()" ng-paste="autoGrowTextarea()"
-                            ng-disabled="loading || !isAuthorized"></textarea>
+            </div> <!-- END chat-messages -->
 
-                        <button class="btn-send" ng-click="sendMessage()"
-                            ng-disabled="!newMessage.trim() || loading || !isAuthorized" title="Send Message">
-                            <i class="fa-solid fa-paper-plane" ng-if="!loading"></i>
-                            <i class="fa-solid fa-circle-notch fa-spin" ng-if="loading"></i>
-                        </button>
-                    </div>
-                    <div class="chat-input-hint">
-                        DALUCI MIS Agent Portal - Business Intelligence Console </div>
+            <!-- Chat Bottom Input Bar -->
+            <div class="chat-input-container">
+                <div class="chat-input-wrapper">
+                    <!-- Textarea supporting Shift+Enter for newline, Enter to Send -->
+                    <textarea class="chat-textarea" id="chat-textarea" ng-model="newMessage"
+                        placeholder="{{isAuthorized ? 'Type your message to DALUCI-MIS here... (Enter to send)' : 'Please authorize token in the sidebar to start chat...'}}"
+                        ng-keydown="($event.keyCode === 13 && !$event.shiftKey) ? ($event.preventDefault() || sendMessage()) : null"
+                        ng-keyup="autoGrowTextarea()" ng-paste="autoGrowTextarea()"
+                        ng-disabled="loading || !isAuthorized"></textarea>
+
+                    <button class="btn-send" ng-click="sendMessage()"
+                        ng-disabled="!newMessage.trim() || isSending || !isAuthorized" title="Send Message">
+                        <i class="fa-solid fa-paper-plane" ng-if="!isSending"></i>
+                        <i class="fa-solid fa-circle-notch fa-spin" ng-if="isSending"></i>
+                    </button>
                 </div>
+                <div class="chat-input-hint">
+                    DALUCI MIS Agent Portal - Business Intelligence Console </div>
+            </div>
 
         </main>
 
@@ -439,9 +451,12 @@
 
                     <!-- Log Expandable Detail Section -->
                     <div class="log-details" ng-show="log.expanded">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 8px;">
-                            <span style="font-size: 11px; color: var(--text-secondary);"><i class="fa-solid fa-circle-info"></i> Detailed Request & Response</span>
-                            <button class="btn-secondary" ng-click="exportSingleLog(log, $event)" style="padding: 4px 8px; font-size: 10px;" title="Export this log as JSON">
+                        <div
+                            style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 8px;">
+                            <span style="font-size: 11px; color: var(--text-secondary);"><i
+                                    class="fa-solid fa-circle-info"></i> Detailed Request & Response</span>
+                            <button class="btn-secondary" ng-click="exportSingleLog(log, $event)"
+                                style="padding: 4px 8px; font-size: 10px;" title="Export this log as JSON">
                                 <i class="fa-solid fa-file-code" style="color: var(--accent-cyan)"></i> Export Log
                             </button>
                         </div>
@@ -471,6 +486,9 @@
     <!-- AngularJS & Support Libraries -->
     <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="chart.min.js"></script>
 
     <!-- App Main Script -->

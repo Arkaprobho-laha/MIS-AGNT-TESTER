@@ -20,6 +20,8 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith('/api/'):
             self.proxy_request('GET')
+        elif self.path.startswith('/proxy-image?url='):
+            self.proxy_image_request()
         else:
             # FIX: Block direct access to server-side source & config files
             blocked_extensions = ('.py', '.pyc', '.env', '.cfg', '.ini', '.sh', '.bat')
@@ -36,7 +38,7 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             super().do_POST()
 
     def do_OPTIONS(self):
-        if self.path.startswith('/api/'):
+        if self.path.startswith('/api/') or self.path.startswith('/proxy-image'):
             self.send_response(200)
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
@@ -44,6 +46,37 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
         else:
             super().do_OPTIONS()
+
+    def proxy_image_request(self):
+        from urllib.parse import urlparse, parse_qs
+        parsed_path = urlparse(self.path)
+        query = parse_qs(parsed_path.query)
+        target_url = query.get('url', [None])[0]
+        
+        if not target_url:
+            self.send_error(400, 'Missing url parameter')
+            return
+            
+        try:
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            
+            req = urllib.request.Request(target_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                content = response.read()
+                
+                self.send_response(200)
+                self.send_header('Content-Type', response.headers.get('Content-Type', 'image/jpeg'))
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Content-Length', str(len(content)))
+                self.end_headers()
+                
+                self.wfile.write(content)
+        except Exception as e:
+            print(f"Proxy Image Error: {e}")
+            self.send_error(500, f'Image Proxy Error: {str(e)}')
 
     def proxy_request(self, method):
         url = TARGET_API + self.path
@@ -98,7 +131,7 @@ from http.server import ThreadingHTTPServer
 if __name__ == '__main__':
     server_address = ("0.0.0.0", PORT)
     httpd = ThreadingHTTPServer(server_address, ProxyHTTPRequestHandler)
-    print(f"Threading Same-Origin Proxy server active at http://0.0.0.0:{PORT}")
+    print(f"Threading Same-Origin Proxy server active at http://localhost:{PORT}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

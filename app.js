@@ -158,23 +158,8 @@
             }
             try {
                 const jsonContent = JSON.stringify(data, null, 2);
-
-                // FIX: Use Blob instead of Data URI to bypass browser length limits
                 const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8' });
-                const url = URL.createObjectURL(blob);
-
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename;
-                a.style.display = 'none';
-                document.body.appendChild(a);
-                a.click();
-
-                // FIX: 60000ms timeout ensures large files complete writing before cleanup
-                setTimeout(function () {
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                }, 60000);
+                window.saveAs(blob, filename);
             } catch (e) {
                 console.error('JSON export failed:', e);
                 alert('JSON export failed: ' + e.message);
@@ -188,43 +173,22 @@
                 return;
             }
             try {
-                const separator = ',';
-                const keys = Object.keys(data[0]);
+                if (typeof Papa === 'undefined') {
+                    console.error('PapaParse library not loaded.');
+                    alert('PapaParse library missing. Cannot export CSV.');
+                    return;
+                }
 
-                const rows = data.map(row => keys.map(k => {
-                    let cell = (row[k] === null || row[k] === undefined) ? '' : row[k];
-                    cell = typeof cell === 'object' ? JSON.stringify(cell) : String(cell);
-                    // FIX: Strip control/null characters — these can make Excel/OS
-                    // treat the file as binary/corrupt instead of plain text CSV.
-                    cell = cell.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
-                    cell = cell.replace(/"/g, '""');  // escape double quotes
-                    if (cell.search(/[,\r\n"]/g) >= 0) {
-                        cell = '"' + cell + '"';  // wrap in quotes
-                    }
-                    return cell;
-                }).join(separator));
+                // Use PapaParse for bulletproof CSV encoding
+                const csvContent = Papa.unparse(data, {
+                    quotes: false,
+                    header: true,
+                    escapeChar: '"'
+                });
 
-                // \uFEFF = UTF-8 BOM — required for Excel to correctly decode Unicode characters
-                // FIX: Use CRLF (\r\n) row separators per RFC 4180 — plain \n row endings
-                // are what cause some Windows/Excel CSV parsers to render everything
-                // as a single garbled column ("looks corrupted").
-                const csvContent = '\uFEFF' + [keys.join(separator), ...rows].join('\r\n');
-
-                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
-                const url = URL.createObjectURL(blob);
-
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename;
-                a.style.display = 'none';
-                document.body.appendChild(a);
-                a.click();
-
-                // FIX: Increased from 2000ms to 60000ms to prevent premature truncation
-                setTimeout(function () {
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                }, 60000);
+                // Add UTF-8 BOM for Excel compatibility
+                const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8' });
+                window.saveAs(blob, filename);
             } catch (e) {
                 console.error('CSV export failed:', e);
                 alert('CSV export failed: ' + e.message);
@@ -453,10 +417,11 @@
         };
 
         // GET session history
-        self.getSessionHistory = function (sessionId) {
+        self.getSessionHistory = function (sessionId, page) {
+            const pageNum = page || 1;
             return makeRequest({
                 method: 'GET',
-                url: BASE_URL + '/chat/' + sessionId + '/history'
+                url: BASE_URL + '/chat/' + sessionId + '/history?page=' + pageNum + '&size=20'
             });
         };
     }]);
@@ -466,6 +431,9 @@
         $scope.auth = {
             token: $window.localStorage.getItem('chat_api_token') || ''
         };
+        $scope.isSending = false;
+        $scope.isRefreshingSessions = false;
+        $scope.isReloadingSession = false;
         $scope.sessions = [];
         $scope.activeSessionId = '';
         // Flag: is the current session a brand-new one (not yet confirmed by API)?
@@ -478,6 +446,11 @@
         $scope.logs = LogService.logs;
         $scope.loading = false;
         $scope.authError = '';
+
+        // Pagination State
+        $scope.historyPage = 1;
+        $scope.hasMoreHistory = false;
+        $scope.isLoadingHistory = false;
         $scope.isAuthorized = false;
 
         // Custom UI states
@@ -667,10 +640,16 @@
             $scope.activeSessionId = sessionId;
             $scope.isNewSession = false;
             $scope.messages = [];
+
+            // Reset pagination state for new session
+            $scope.historyPage = 1;
+            $scope.hasMoreHistory = false;
+
             $scope.loading = true;
+            $scope.isLoadingHistory = true;
             $scope.isSidebarOpen = false;  // Close mobile sidebar
 
-            ApiService.getSessionHistory(sessionId).then(
+            ApiService.getSessionHistory(sessionId, $scope.historyPage).then(
                 function (response) {
                     if (response.success && response.data) {
                         $scope.messages = response.data.map(msg => ({
@@ -679,20 +658,67 @@
                             content: msg.content,
                             // FIX: Normalize API timestamps to UTC for correct IST display
                             created_at: normalizeTimestamp(msg.created_at),
-                            sources: msg.sources || [],
+                            sources: (msg.sources || []).filter(s => s && (s.title || s.snippet || s.url)),
                             tool_calls: msg.tool_calls || [],
                             visualizations: msg.visualizations || [],
                             images: msg.images || []
-                        }));
+                        })).reverse();
                         // CACHE: Persist real message count + last message for this session
                         syncSessionMeta(sessionId, $scope.messages);
+
+                        // Check pagination meta
+                        if (response.meta && $scope.historyPage < response.meta.total_pages) {
+                            $scope.hasMoreHistory = true;
+                        } else {
+                            $scope.hasMoreHistory = false;
+                        }
                     }
                     $scope.loading = false;
+                    $scope.isLoadingHistory = false;
                     $scope.scrollToBottom();
                 },
                 function (err) {
                     $scope.loading = false;
+                    $scope.isLoadingHistory = false;
                     console.error('Failed to load chat history for session ' + sessionId, err);
+                }
+            );
+        };
+
+        // Load older history (pagination)
+        $scope.loadMoreHistory = function () {
+            if (!$scope.hasMoreHistory || $scope.isLoadingHistory || !$scope.activeSessionId || $scope.isNewSession) return;
+
+            $scope.isLoadingHistory = true;
+            const nextPage = $scope.historyPage + 1;
+
+            ApiService.getSessionHistory($scope.activeSessionId, nextPage).then(
+                function (response) {
+                    if (response.success && response.data) {
+                        const olderMsgs = response.data.map(msg => ({
+                            id: msg.id,
+                            role: msg.role === 'user' ? 'user' : 'agent',
+                            content: msg.content,
+                            created_at: normalizeTimestamp(msg.created_at),
+                            sources: (msg.sources || []).filter(s => s && (s.title || s.snippet || s.url)),
+                            tool_calls: msg.tool_calls || [],
+                            visualizations: msg.visualizations || [],
+                            images: msg.images || []
+                        })).reverse();
+
+                        // With flex-direction: column, older messages should be prepended to appear at the top
+                        $scope.messages = [...olderMsgs, ...$scope.messages];
+                        $scope.historyPage = nextPage;
+
+                        if (response.meta && $scope.historyPage >= response.meta.total_pages) {
+                            $scope.hasMoreHistory = false;
+                        }
+                    }
+                    $scope.isLoadingHistory = false;
+                },
+                function (err) {
+                    $scope.isLoadingHistory = false;
+                    console.error('Failed to load older chat history for session ' + $scope.activeSessionId, err);
                 }
             );
         };
@@ -726,7 +752,7 @@
                             role: msg.role === 'user' ? 'user' : 'agent',
                             content: msg.content,
                             created_at: normalizeTimestamp(msg.created_at),
-                            sources: msg.sources || [],
+                            sources: (msg.sources || []).filter(s => s && (s.title || s.snippet || s.url)),
                             tool_calls: msg.tool_calls || [],
                             visualizations: msg.visualizations || [],
                             images: msg.images || []
@@ -819,6 +845,7 @@
                 content: promptText,
                 created_at: new Date().toISOString()
             };
+            // Append new user message to the bottom
             $scope.messages.push(userMsg);
             $scope.scrollToBottom();
 
@@ -833,11 +860,12 @@
                             role: 'agent',
                             content: response.data.reply || '',
                             created_at: new Date().toISOString(),
-                            sources: response.data.sources || [],
+                            sources: (response.data.sources || []).filter(s => s && (s.title || s.snippet || s.url)),
                             tool_calls: response.data.tool_calls || [],
                             visualizations: response.data.visualizations || [],
                             images: response.data.images || []
                         };
+                        // Append new agent message to the bottom
                         $scope.messages.push(agentMsg);
 
                         // FIX: If this was a new session, get the session_id from the API response
@@ -1011,42 +1039,7 @@
             }
         };
 
-        // Download a generated image (from S3 or any URL) as an actual file.
-        // NOTE: a plain <a href="..." download> is silently ignored by browsers when
-        // the URL is cross-origin (e.g. S3) — it just opens the image in a new tab
-        // instead of downloading it. Fetching as a blob makes the download attribute
-        // work reliably, as long as the bucket's CORS policy allows GET from this origin.
-        $scope.downloadImage = function (url, filename, event) {
-            if (event) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
-            if (!url) return;
 
-            fetch(url, { mode: 'cors' })
-                .then(function (res) {
-                    if (!res.ok) throw new Error('HTTP ' + res.status);
-                    return res.blob();
-                })
-                .then(function (blob) {
-                    const blobUrl = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = blobUrl;
-                    a.download = filename || 'generated-image.jpg';
-                    a.style.display = 'none';
-                    document.body.appendChild(a);
-                    a.click();
-                    setTimeout(function () {
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(blobUrl);
-                    }, 10000);
-                })
-                .catch(function (err) {
-                    console.warn('Blob download failed (likely CORS on the image bucket), falling back to opening the image in a new tab:', err);
-                    // Fallback: open in a new tab so the user can save it manually
-                    window.open(url, '_blank', 'noopener,noreferrer');
-                });
-        };
 
         // Format JSON payload helper
         $scope.formatJSON = function (data) {
@@ -1078,6 +1071,66 @@
             if (!el) return;
             el.style.height = 'auto';
             el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+        };
+
+        // Download image helper using FileSaver with proxy fallback
+        $scope.downloadImage = function (url, filename, event) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            if (!url) return;
+
+            // Route through our local proxy to bypass external CORS restrictions
+            const proxyUrl = '/proxy-image?url=' + encodeURIComponent(url);
+
+            fetch(proxyUrl, { mode: 'cors' })
+                .then(response => {
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    return response.blob();
+                })
+                .then(blob => {
+                    window.saveAs(blob, filename || 'generated-image.jpg');
+                })
+                .catch(err => {
+                    console.error('Fetch failed (likely CORS), falling back to direct link:', err);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename || 'generated-image.jpg';
+                    // a.target = '_blank'; <-- Remove this line completely
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                });
+        };
+
+        // Export entire active chat as an Image using html2canvas
+        $scope.exportChatAsImage = function () {
+            const container = document.getElementById('chat-messages-container');
+            if (!container) return;
+
+            // Add a temporary class if we need to adjust styles for the screenshot
+            // e.g., removing max-height or scrollbars
+            const originalOverflow = container.style.overflowY;
+            container.style.overflowY = 'visible';
+
+            html2canvas(container, {
+                backgroundColor: '#0a0a0f', // Match UI background
+                scale: 2, // High resolution
+                useCORS: true // Attempt to load external images (like Chart.js/S3 images)
+            }).then(canvas => {
+                // Restore original styles
+                container.style.overflowY = originalOverflow;
+
+                canvas.toBlob(function (blob) {
+                    const filename = `chat_export_${$scope.activeSessionId}_${Date.now()}.png`;
+                    window.saveAs(blob, filename);
+                });
+            }).catch(err => {
+                container.style.overflowY = originalOverflow;
+                console.error('Screenshot export failed:', err);
+                alert('Failed to generate chat image: ' + err.message);
+            });
         };
 
         // Load sessions lists on boot if authorized
