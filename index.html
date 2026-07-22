@@ -6,8 +6,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DALUCI MIS Agent - Business IntelligenceConsole</title>
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=6">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- AG Grid Community — Styles -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.2.2/styles/ag-grid.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.2.2/styles/ag-theme-quartz.css">
 </head>
 
 <body ng-app="chatApp" ng-controller="ChatController">
@@ -294,19 +297,32 @@
 
 
 
-                        <!-- Visualizations / Charts -->
+                        <!-- Visualizations: Tables & Charts -->
                         <div class="message-visualizations"
                             ng-if="message.visualizations && message.visualizations.length > 0"
-                            style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                            <div class="visualization-item" ng-repeat="vis in message.visualizations track by $index"
-                                style="position: relative; height: 350px; width: 100%; margin-bottom: 10px;">
-                                <!-- Lazy loader overlay -->
-                                <div class="chart-loader" ng-if="!vis._rendered"
-                                    style="position: absolute; top:0; left:0; right:0; bottom:0; display:flex; justify-content:center; align-items:center; background: rgba(255,255,255,0.02); z-index: 10; border-radius: 8px;">
-                                    <i class="fa-solid fa-circle-notch fa-spin"
-                                        style="color: var(--accent-cyan); font-size: 24px;"></i>
+                            style="margin-top: 15px;">
+                            <div ng-repeat="vis in message.visualizations track by $index">
+
+                                <!-- TABLE VISUALIZATION — detected by table_config property -->
+                                <div ng-if="vis.table_config"
+                                     class="table-vis-outer"
+                                     table-renderer="vis"
+                                     table-message-vis="message.visualizations">
                                 </div>
-                                <canvas chart-renderer="vis"></canvas>
+
+                                <!-- CHART VISUALIZATION — Chart.js (no table_config = it's a chart) -->
+                                <div ng-if="!vis.table_config"
+                                    class="visualization-item"
+                                    style="position: relative; height: 350px; width: 100%; margin-bottom: 10px;">
+                                    <!-- Lazy loader overlay -->
+                                    <div class="chart-loader" ng-if="!vis._rendered"
+                                        style="position: absolute; top:0; left:0; right:0; bottom:0; display:flex; justify-content:center; align-items:center; background: rgba(255,255,255,0.02); z-index: 10; border-radius: 8px;">
+                                        <i class="fa-solid fa-circle-notch fa-spin"
+                                            style="color: var(--accent-cyan); font-size: 24px;"></i>
+                                    </div>
+                                    <canvas chart-renderer="vis"></canvas>
+                                </div>
+
                             </div>
                         </div>
 
@@ -490,9 +506,11 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="chart.min.js"></script>
+    <!-- AG Grid Community — Vanilla JS -->
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@32.2.2/dist/ag-grid-community.min.js"></script>
 
     <!-- App Main Script -->
-    <script src="app.js"></script>
+    <script src="app.js?v=4"></script>
 </body>
 
 </html>

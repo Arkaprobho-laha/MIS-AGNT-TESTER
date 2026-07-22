@@ -1629,3 +1629,391 @@ body {
         padding: 8px 12px;
     }
 }
+
+/* ================================================================
+   TABLE VISUALIZATION — AG Grid Integration
+   DALUCI MIS Agent — Premium Dark Table Component
+   ================================================================ */
+
+/* --- Outer wrapper (margin / spacing) --- */
+.table-vis-outer {
+    width: 100%;
+    margin-bottom: 12px;
+}
+
+/* --- Card container --- */
+.table-vis-wrapper {
+    border-radius: 12px;
+    border: 1px solid rgba(6, 182, 212, 0.15);
+    background: rgba(10, 10, 18, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    /* overflow-x: auto allows horizontal scroll when many columns on narrow screens */
+    overflow-x: auto;
+    overflow-y: hidden; /* clips border-radius on top/bottom edges */
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255,255,255,0.03);
+    /* Prevent the card from shrinking smaller than a usable table width */
+    min-width: 0;
+}
+
+/* --- Header bar: title + actions --- */
+.table-vis-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: linear-gradient(135deg,
+        rgba(6, 182, 212, 0.10) 0%,
+        rgba(139, 92, 246, 0.05) 60%,
+        transparent 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    gap: 10px;
+    flex-wrap: wrap;
+    min-height: 44px;
+}
+
+.table-vis-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent-cyan);
+    letter-spacing: 0.02em;
+    flex-shrink: 0;
+}
+
+.table-vis-title i {
+    font-size: 13px;
+    opacity: 0.85;
+}
+
+.table-vis-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+/* --- Row-count badge --- */
+.table-meta-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    white-space: nowrap;
+    transition: color 0.2s;
+}
+
+.table-meta-badge i {
+    color: var(--accent-cyan);
+    font-size: 10px;
+}
+
+/* --- CSV Export button --- */
+.btn-table-csv {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    font-family: var(--font-sans);
+    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 7px;
+    padding: 4px 11px;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s, background 0.2s, transform 0.15s;
+    white-space: nowrap;
+}
+
+.btn-table-csv:hover {
+    color: #4ade80;
+    border-color: rgba(74, 222, 128, 0.35);
+    background: rgba(74, 222, 128, 0.07);
+    transform: translateY(-1px);
+}
+
+.btn-table-csv:active {
+    transform: translateY(0);
+}
+
+.btn-table-csv i {
+    font-size: 11px;
+}
+
+/* --- Search row --- */
+.table-search-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    background: rgba(0, 0, 0, 0.18);
+    flex-wrap: wrap;
+}
+
+.table-search-input-wrap {
+    position: relative;
+    flex: 1;
+    min-width: 160px;
+}
+
+.table-search-icon {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-secondary);
+    font-size: 11px;
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+.table-quick-filter {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 7px;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-family: var(--font-sans);
+    padding: 6px 10px 6px 30px;
+    outline: none;
+    transition: border-color 0.2s ease, background 0.2s ease;
+    box-sizing: border-box;
+}
+
+.table-quick-filter:focus {
+    border-color: var(--accent-cyan);
+    background: rgba(6, 182, 212, 0.06);
+}
+
+.table-quick-filter::placeholder {
+    color: var(--text-secondary);
+    font-size: 11px;
+    opacity: 0.7;
+}
+
+.table-generated-at {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+    opacity: 0.6;
+}
+
+/* --- AG Grid mount point --- */
+.ag-table-container {
+    width: 100%;
+    /* Let AG Grid manage its own internal scroll — do not set overflow:hidden here */
+    min-width: 0;
+}
+
+/* --- Server-side info footer --- */
+.table-server-note {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    padding: 7px 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    background: rgba(0, 0, 0, 0.12);
+    opacity: 0.75;
+}
+
+.table-server-note i {
+    color: var(--accent-purple);
+    font-size: 10px;
+}
+
+/* ================================================================
+   AG GRID THEME OVERRIDES — Match DALUCI dark palette exactly
+   ag-theme-quartz-dark CSS custom property overrides
+   ================================================================ */
+
+.table-vis-wrapper .ag-theme-quartz-dark {
+    /* Core colors */
+    --ag-background-color:              #0b0b14;
+    --ag-header-background-color:       #0f0f1d;
+    --ag-odd-row-background-color:      rgba(255, 255, 255, 0.013);
+    --ag-row-hover-color:               rgba(6, 182, 212, 0.07);
+    --ag-selected-row-background-color: rgba(6, 182, 212, 0.13);
+
+    /* Text */
+    --ag-foreground-color:              #d1d5db;
+    --ag-secondary-foreground-color:    #64748b;
+    --ag-header-foreground-color:       #06b6d4;
+    --ag-disabled-foreground-color:     rgba(255, 255, 255, 0.2);
+
+    /* Borders */
+    --ag-border-color:                  rgba(255, 255, 255, 0.06);
+    --ag-cell-horizontal-border:        solid rgba(255, 255, 255, 0.04);
+    --ag-header-column-separator-color: rgba(255, 255, 255, 0.06);
+    --ag-header-column-resize-handle-color: rgba(6, 182, 212, 0.4);
+
+    /* Typography */
+    --ag-font-family:  'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+    --ag-font-size:    12px;
+
+    /* Sizing */
+    --ag-grid-size:    5px;
+    --ag-row-height:   38px;
+    --ag-header-height: 40px;
+    --ag-list-item-height: 28px;
+
+    /* Inputs / filters */
+    --ag-input-border-color:         rgba(255, 255, 255, 0.12);
+    --ag-input-focus-border-color:   #06b6d4;
+    --ag-input-focus-box-shadow:     0 0 0 2px rgba(6, 182, 212, 0.2);
+
+    /* Popup (column filter panel) */
+    --ag-popup-background-color:     #141423;
+    --ag-menu-background-color:      #141423;
+    --ag-menu-border-color:          rgba(255, 255, 255, 0.09);
+
+    /* Pagination */
+    --ag-pagination-button-color:    #06b6d4;
+
+    /* Checkbox */
+    --ag-checkbox-checked-color:     #06b6d4;
+    --ag-checkbox-background-color:  rgba(6, 182, 212, 0.1);
+
+    /* Scrollbar */
+    --ag-scrollbar-thumb-color:      rgba(6, 182, 212, 0.25);
+    --ag-scrollbar-track-color:      transparent;
+}
+
+/* Column header — uppercase, weighted, centered text but keep menu right */
+.table-vis-wrapper .ag-header-cell-label {
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    justify-content: center; /* Center the header text */
+    flex: 1; /* Allow it to push icons */
+}
+
+/* Ensure filter/menu button is pushed to the far right */
+.table-vis-wrapper .ag-header-cell-comp-wrapper {
+    display: flex;
+    width: 100%;
+}
+/* Force left-to-right flex direction even on numeric columns (which AG Grid reverses by default) */
+.table-vis-wrapper .ag-cell-label-container {
+    width: 100%;
+    flex-direction: row !important; 
+}
+.table-vis-wrapper .ag-header-icon {
+    /* Keep filter icon on the right */
+    margin-left: auto !important; 
+    margin-right: 0 !important;
+}
+
+/* Center all table cell content */
+.table-vis-wrapper .ag-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Sort icon — cyan tint */
+.table-vis-wrapper .ag-sort-indicator-icon {
+    color: var(--accent-cyan) !important;
+    opacity: 0.8;
+}
+
+/* Active sort column highlight */
+.table-vis-wrapper .ag-header-cell[aria-sort] {
+    background: rgba(6, 182, 212, 0.06) !important;
+}
+
+/* Number cells — monospace, light cyan, centered */
+.table-vis-wrapper .ag-cell-number {
+    color: #67e8f9 !important;
+    font-family: var(--font-mono) !important;
+    font-size: 12px !important;
+    font-variant-numeric: tabular-nums;
+    justify-content: center !important; /* Override right-align */
+}
+
+/* Row hover — subtle glow on left edge */
+.table-vis-wrapper .ag-row:hover {
+    border-left: 2px solid rgba(6, 182, 212, 0.35) !important;
+}
+
+/* Pagination bar */
+.table-vis-wrapper .ag-paging-panel {
+    border-top: 1px solid rgba(255, 255, 255, 0.05) !important;
+    background: rgba(0, 0, 0, 0.25) !important;
+    font-size: 11px !important;
+    padding: 4px 14px !important;
+    color: var(--text-secondary) !important;
+}
+
+.table-vis-wrapper .ag-paging-button:not([disabled]) {
+    color: #06b6d4 !important;
+    transition: opacity 0.15s;
+}
+
+.table-vis-wrapper .ag-paging-button:hover:not([disabled]) {
+    opacity: 0.65;
+}
+
+.table-vis-wrapper .ag-paging-page-summary-panel {
+    gap: 4px;
+}
+
+/* Page-size selector */
+.table-vis-wrapper .ag-paging-page-size select {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    padding: 2px 4px;
+    outline: none;
+}
+
+/* Scrollbar thin styling within the grid */
+.table-vis-wrapper .ag-body-horizontal-scroll-viewport,
+.table-vis-wrapper .ag-body-viewport {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(6, 182, 212, 0.25) transparent;
+}
+
+/* Column filter popup border-radius */
+.table-vis-wrapper .ag-filter-toolpanel-instance-filter {
+    border-radius: 8px;
+}
+
+/* Focus ring */
+.table-vis-wrapper .ag-cell:focus {
+    outline: 1px solid rgba(6, 182, 212, 0.4) !important;
+    outline-offset: -1px;
+}
+
+/* Responsive: on very small screens hide generated-at label */
+@media (max-width: 480px) {
+    .table-generated-at {
+        display: none;
+    }
+    .table-vis-header {
+        padding: 8px 10px;
+    }
+    .table-search-row {
+        padding: 6px 10px;
+    }
+}
