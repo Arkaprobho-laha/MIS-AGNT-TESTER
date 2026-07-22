@@ -1244,6 +1244,12 @@
                                 config = JSON.parse(JSON.stringify(scope.chartData));
                             }
 
+                            // Guard: silently skip table visualizations (detected by table_config property)
+                            // Backend sends flat object { table_config, rows, meta } — no type field
+                            if (config.table_config) {
+                                return;
+                            }
+
                             // Check if the payload contains pre-configured chartjs_config
                             let finalConfig = null;
                             if (config.type === 'chart_visualization' && config.payload && config.payload.chartjs_config) {
@@ -1366,6 +1372,296 @@
                     observer.disconnect();
                     if (chartInstance) {
                         chartInstance.destroy();
+                    }
+                });
+            }
+        };
+    }]);
+
+    // ============================================================
+    // AG Grid Table Renderer Directive
+    // Handles type === "table_visualization" payloads from backend
+    // ============================================================
+    app.directive('tableRenderer', ['$timeout', function ($timeout) {
+        return {
+            restrict: 'A',
+            scope: {
+                visData: '=tableRenderer',
+                allVis: '=tableMessageVis'   // all visualizations in the parent message
+            },
+            template: `
+                <div class="table-vis-wrapper" ng-if="config">
+                    <!-- Header: title + row count badge + CSV export -->
+                    <div class="table-vis-header">
+                        <div class="table-vis-title">
+                            <i class="fa-solid fa-table-cells-large"></i>
+                            <span>{{ config.title || 'Data Table' }}</span>
+                        </div>
+                        <div class="table-vis-actions">
+                            <span class="table-meta-badge">
+                                <i class="fa-solid fa-database"></i>
+                                {{ rows.length | number }} rows
+                            </span>
+                            <button class="btn-table-csv" ng-click="exportCSV()" title="Export visible data as CSV">
+                                <i class="fa-solid fa-file-csv"></i> Export CSV
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Search bar + generated-at timestamp -->
+                    <div class="table-search-row">
+                        <div class="table-search-input-wrap">
+                            <i class="fa-solid fa-magnifying-glass table-search-icon"></i>
+                            <input class="table-quick-filter"
+                                   placeholder="Search across all columns..."
+                                   ng-model="quickFilter"
+                                   ng-change="onFilterChange()">
+                        </div>
+                        <span class="table-generated-at" ng-if="meta.generatedAt">
+                            <i class="fa-regular fa-clock"></i>
+                            {{ meta.generatedAt | date:'MMM d, h:mm a' }}
+                        </span>
+                    </div>
+
+                    <!-- AG Grid mount point -->
+                    <div class="ag-table-container ag-theme-quartz-dark"></div>
+
+                    <!-- Server-side notice (informational only when serverSide: true) -->
+                    <div class="table-server-note" ng-if="config.serverSide">
+                        <i class="fa-solid fa-server"></i>
+                        Server-side mode &bull; {{ meta.totalRows | number }} total records
+                    </div>
+                </div>
+            `,
+            link: function (scope, element) {
+                // --- Default scope values (template renders immediately with these) ---
+                scope.config = null;
+                scope.rows = [];
+                scope.meta = {};
+                scope.quickFilter = '';
+                scope._gridApi = null;
+
+                // -------------------------------------------------------
+                // PARSE: Read flat structure from backend
+                // -------------------------------------------------------
+                if (!scope.visData || !scope.visData.table_config) return;
+
+                const tableConfig = scope.visData.table_config || {};
+                let rows = (scope.visData.rows || []).map(r => Object.assign({}, r)); // shallow clone rows
+                const meta = scope.visData.meta || {};
+
+                // -------------------------------------------------------
+                // DYNAMIC MERGE: Pull missing columns from sibling chart's
+                // dataset (e.g. if backend put 'spend' in chart but not table)
+                // Matches rows on any shared string/date key (e.g. 'date').
+                // -------------------------------------------------------
+                if (rows.length > 0 && scope.allVis && Array.isArray(scope.allVis)) {
+                    const row0 = rows[0];
+                    const tableKeys = new Set(Object.keys(row0));
+
+                    // Find sibling visualization that has a dataset array of same length
+                    // but is NOT a table (no table_config) and has extra numeric keys
+                    const sibling = scope.allVis.find(function (v) {
+                        return !v.table_config
+                            && Array.isArray(v.dataset)
+                            && v.dataset.length === rows.length;
+                    });
+
+                    if (sibling && sibling.dataset.length > 0) {
+                        const ds0Keys = Object.keys(sibling.dataset[0]);
+                        // Check that sibling has at least one NEW key not in table rows
+                        const hasExtra = ds0Keys.some(k => !tableKeys.has(k));
+
+                        if (hasExtra) {
+                            // Find a common join key (prefer 'date', else first shared string key)
+                            const sharedKeys = ds0Keys.filter(k => tableKeys.has(k));
+                            const joinKey = sharedKeys.includes('date')
+                                ? 'date'
+                                : sharedKeys.find(k => typeof sibling.dataset[0][k] === 'string');
+
+                            if (joinKey) {
+                                // Build a lookup map from sibling dataset
+                                const dsMap = {};
+                                sibling.dataset.forEach(function (d) { dsMap[d[joinKey]] = d; });
+
+                                // Merge: sibling provides extra keys, table row overrides shared keys
+                                rows = rows.map(function (row) {
+                                    const match = dsMap[row[joinKey]];
+                                    // Object.assign: sibling fills gaps, row values take priority
+                                    return match ? Object.assign({}, match, row) : row;
+                                });
+
+                                console.info('[tableRenderer] Merged sibling dataset into table rows.',
+                                    'New keys added:', ds0Keys.filter(k => !tableKeys.has(k)));
+                            }
+                        }
+                    }
+                }
+
+                scope.config = tableConfig;
+                scope.rows = rows;
+                scope.meta = meta;
+
+                // -------------------------------------------------------
+                // DYNAMIC COLUMN DETECTION
+                // Derive ALL columns from actual merged row data keys.
+                // table_config.columns is used ONLY as a metadata hint
+                // (for titles and types). Any extra row keys auto-appear.
+                // -------------------------------------------------------
+                function buildColumnDefs(mergedRows, configColumns) {
+                    // Build a metadata lookup from table_config.columns
+                    const metaMap = {};
+                    (configColumns || []).forEach(function (col) {
+                        metaMap[col.key] = col;
+                    });
+
+                    // Collect all unique keys from actual row data
+                    const seenKeys = new Set();
+                    const orderedKeys = [];
+
+                    // 1. Preserve table_config.columns order first
+                    (configColumns || []).forEach(function (col) {
+                        if (!seenKeys.has(col.key)) {
+                            seenKeys.add(col.key);
+                            orderedKeys.push(col.key);
+                        }
+                    });
+
+                    // 2. Append any extra keys from actual row data (e.g. 'spend' not in columns config)
+                    if (mergedRows.length > 0) {
+                        Object.keys(mergedRows[0]).forEach(function (k) {
+                            if (!seenKeys.has(k)) {
+                                seenKeys.add(k);
+                                orderedKeys.push(k);
+                            }
+                        });
+                    }
+
+                    return orderedKeys.map(function (key) {
+                        const colMeta = metaMap[key];
+                        // Auto-detect type if no config metadata: check first row value
+                        const sample = mergedRows.length > 0 ? mergedRows[0][key] : null;
+                        const isNumber = colMeta
+                            ? colMeta.type === 'number'
+                            : (sample !== null && sample !== undefined && !isNaN(Number(sample)) && typeof sample !== 'boolean');
+
+                        // Title: use configured title, or capitalize the key name
+                        const title = colMeta && colMeta.title
+                            ? colMeta.title
+                            : key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
+
+                        const def = {
+                            field: key,
+                            headerName: title,
+                            sortable: colMeta ? colMeta.sortable !== false : true,
+                            filter: (colMeta ? colMeta.filterable !== false : true)
+                                ? (isNumber ? 'agNumberColumnFilter' : 'agTextColumnFilter')
+                                : false,
+                            resizable: true,
+                            flex: (colMeta && colMeta.width) ? 0 : 1,
+                            minWidth: (colMeta && colMeta.width) || 100
+                        };
+
+                        if (isNumber) {
+                            def.type = 'numericColumn';
+                            def.cellClass = 'ag-cell-number';
+                            def.valueFormatter = function (params) {
+                                if (params.value == null || params.value === '') return '';
+                                const n = Number(params.value);
+                                return isNaN(n) ? params.value : n.toLocaleString('en-US');
+                            };
+                        }
+
+                        return def;
+                    });
+                }
+
+
+                // --- Mount AG Grid after template DOM is ready ---
+                $timeout(function () {
+                    if (typeof agGrid === 'undefined') {
+                        console.error('[tableRenderer] AG Grid library not loaded');
+                        return;
+                    }
+
+                    const container = element[0].querySelector('.ag-table-container');
+                    if (!container) return;
+
+                    const gridOptions = {
+                        columnDefs: buildColumnDefs(rows, tableConfig.columns),
+                        rowData: rows,
+
+                        // Pagination
+                        pagination: true,
+                        paginationPageSize: tableConfig.pageSize || 25,
+                        paginationPageSizeSelector: [10, 25, 50, 100],
+
+                        // Responsive height — grows with rows on the current page
+                        domLayout: 'autoHeight',
+
+                        // Performance
+                        animateRows: false,
+                        suppressColumnVirtualisation: false,
+
+                        // UX
+                        enableCellTextSelection: true,
+                        suppressMovableColumns: false,
+
+                        defaultColDef: {
+                            sortable: true,
+                            filter: false,
+                            resizable: true,
+                            flex: 1,
+                            minWidth: 100
+                        },
+
+                        // Fit columns to container width on ready and resize
+                        onGridReady: function (params) {
+                            params.api.sizeColumnsToFit();
+                        },
+                        onGridSizeChanged: function (params) {
+                            params.api.sizeColumnsToFit();
+                        }
+                    };
+
+                    scope._gridApi = agGrid.createGrid(container, gridOptions);
+
+                    // --- Also refit columns on browser/window resize (handles device rotation, panel resize) ---
+                    function onWindowResize() {
+                        if (scope._gridApi) {
+                            try { scope._gridApi.sizeColumnsToFit(); } catch (e) { /* ignore if destroyed */ }
+                        }
+                    }
+                    window.addEventListener('resize', onWindowResize);
+
+                    // Unbind window resize when directive is destroyed
+                    scope.$on('$destroy', function () {
+                        window.removeEventListener('resize', onWindowResize);
+                    });
+                }, 0);
+
+                // --- Quick filter across all columns ---
+                scope.onFilterChange = function () {
+                    if (scope._gridApi) {
+                        scope._gridApi.setGridOption('quickFilterText', scope.quickFilter || '');
+                    }
+                };
+
+                // --- CSV Export (AG Grid native — respects current filter/sort) ---
+                scope.exportCSV = function () {
+                    if (scope._gridApi) {
+                        scope._gridApi.exportDataAsCsv({
+                            fileName: (tableConfig.id || 'table_export') + '_' + Date.now() + '.csv',
+                            allColumns: true
+                        });
+                    }
+                };
+
+                // --- Cleanup on directive destroy ---
+                scope.$on('$destroy', function () {
+                    if (scope._gridApi) {
+                        try { scope._gridApi.destroy(); } catch (e) { /* ignore */ }
+                        scope._gridApi = null;
                     }
                 });
             }
